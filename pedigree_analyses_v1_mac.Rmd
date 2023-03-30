@@ -1,0 +1,218 @@
+---
+title: "pedigree_analysis_v1"
+author: "Kseniia Maksimova"
+date: "2023-03-07"
+output: pdf_document
+---
+
+## This markdown presents a pedigree QC analysis of horse first batch data provided by Beatrice Plusvital, February 2023. 
+Input: pedigree xlsx table
+Output: filtered pedigree data & pedigree inbreeding, kinship matrices
+
+```{r, warning=FALSE,message=FALSE}
+rm(list = ls())
+
+library(openxlsx)
+library(dplyr)
+library(magrittr)
+library(tidyverse)
+library(kinship2)
+library(pedsuite)
+library(pedigree)
+library(hrbrthemes)
+```
+
+### 1. Uploading the pedigree data
+
+```{r}
+pedigree_path <- "beatrice_sample_data/pedID.xlsx"
+# pedigree_path <- "SFI_KM/pedID.xlsx"
+
+sheets <- openxlsx::getSheetNames(pedigree_path)
+sample_df <- lapply(sheets, openxlsx::read.xlsx, xlsxFile=pedigree_path, na.string=c("", "None", " ", "NULL")) # to unify all unidentified values
+
+names(sample_df) <- sheets
+# family structure is in PedNew sheet
+ped_df <- sample_df[["PedNew"]]
+head(ped_df)
+```
+
+### 2. Data exploration
+```{r}
+
+print(paste("The number of individuals is", dim(ped_df)[1],
+"and number of columns is", dim(ped_df)[2], sep=" "))
+
+# let's check not ids columns
+cols_f <- c("status", "sex", "colour", "COB")
+stat_factors <- lapply( sapply(cols_f, function(x){ tbl <- table( unlist( ped_df[,grep( x, colnames(ped_df) )] ) ,useNA="ifany" ); rbind( cbind( Percent=round( tbl/sum(tbl)*100, digits=2 ), Freq=tbl ), cbind( sum(tbl/sum(tbl)*100), sum(tbl) ) ); } ), function(x) x[order(x[,1]),] ) # making a list of matrices with frequency per each category column of our df
+
+print(stat_factors)
+
+# let's convert all columns except YOB to character
+# ped_df$YOB %<>% as.Date(ped_df$YOB, format="%Y")
+# ped_df %<>% mutate_at(cols_f, as.factor)
+```
+Probably for some packages there is needed to replace NA value in sex column to some integer. We have 6 single values with numbers in color column likely because script that process website parsed absent info wrongly. So it's better to replace them to NA values.
+Other columns seem fine.
+
+```{r}
+# check year of birth column
+p <- ped_df %>% ggplot(aes(x=YOB)) + 
+  geom_histogram( binwidth=5, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+  ggtitle("Distribution of years of birth") +
+  theme(
+    plot.title = element_text(size=10)
+    ) +
+  theme_ipsum()
+
+print(p); 
+print(paste("where the minimum year of birth is", min(ped_df$YOB, na.rm=T), "and the maximum is", max(ped_df$YOB, na.rm = T), sep=" "))
+```
+
+```{r}
+sapply(ped_df, function(x) sum(is.na(x)))
+
+nrow(ped_df[(is.na(ped_df$sire_id) & is.na(ped_df$dam_id)),])
+hist(ped_df[(is.na(ped_df$sire_id) & is.na(ped_df$dam_id)),]$YOB)
+summary(ped_df[(is.na(ped_df$sire_id) & is.na(ped_df$dam_id)),]$YOB)
+
+```
+The max amount of NA values is in colour column which is not a problem. The next are both sire nd dam ids columns and it seems that we don't have unassigned sires and identified dams (and opposite) so only both parents are unknown. The first hypothesis was that those animals probably are founders but if we check their YOB it's unlikely true.
+
+### 3. Checking for logical errors
+
+```{r}
+
+# if some individuals has several sires or dams
+ped_df %>%
+  group_by(id) %>%
+  summarize(n_sires=n_distinct(sire_id), n_dams=n_distinct(dam_id)) %>%
+  filter(n_sires>1 | n_dams>1) %>%
+  nrow(.) # individuals that have several sires/dams
+
+# if the year of individual less than the year of its sire or dam
+ids_col <- c("id", "sire_id", "dam_id", "YOB") 
+
+joined_df <- ped_df[ids_col] %>%
+  merge(ped_df[ids_col], by.x="sire_id", by.y="id", suffixes=(c("_child", "_sire"))) %>%
+  select(id, sire_id, dam_id_child, YOB_child, YOB_sire) %>%
+  merge(ped_df[ids_col], by.x="dam_id_child", by.y="id", 
+        suffixes=(c("_child", "_dam"))) %>%
+  rename(., "YOB_dam"="YOB", "child"="id") %>%
+  select(child, dam_id_child, sire_id_child, YOB_child, YOB_sire, YOB_dam)
+
+joined_df %>%
+  filter(YOB_child<YOB_sire & YOB_sire!="None" | YOB_child<YOB_dam & YOB_dam!="None")
+
+# if sex doesn't match with parentship info
+# i.e. some sires are mothers of someone
+length(ped_df$dam_id[complete.cases(ped_df$dam_id) %in% ped_df[ped_df$sex==1,]$id])
+# some dams are fathers of someone
+length(ped_df$sire_id[complete.cases(ped_df$sire_id) %in% ped_df[ped_df$sex==2,]$id])
+#  prob it's better to delete this indiviuals
+```
+
+There are no individuals that have several sires or dams. There is one individual whose mother was born in 2014 while the indiv was born in 1962. Better to delete this whole record. Additionally, the pedigree doesn't have conflict in assigned sex and the parent role (all sires have male records and all dams have female variables in their sex column).
+
+It's better to check if there are ids that we can see in sire and dam columns but don't have info for themselves
+```{r}
+ped_df %>% filter(!(sire_id %in% id), !is.na(sire_id))
+ped_df %>% filter(!(dam_id %in% id), !is.na(dam_id))
+```
+
+### 4. Filter out and clear the data
+```{r}
+# replace those numbers in color column
+ped_df$colour[ped_df$colour %in% c("2187", "2485", "2600", "3387", "4830", "5937")] <- NA
+table(ped_df$colour, useNA="ifany")
+
+# replace NA values to 3 according kinship package
+ped_df$sex[is.na(ped_df$sex)] <- 3
+
+# remove record with mother that younger than her child
+ped_df <- filter(ped_df, id!="59128")
+
+
+# let's join ids mapping from different list of table and save as a clened ped df
+filt_ped_df <- merge(ped_df, 
+                     sample_df[["PedIDMatch"]], 
+                     by.x="id", 
+                     by.y="horse_id", 
+                     all.x=T)
+
+write.csv(filt_ped_df, "filt_pedigree.csv", row.names=FALSE, quote=FALSE) 
+
+# filt_ped_df contains duplicated rows due to multiple genome ids for same individuals
+# it's not an issue since we will search match for given genome id in pedigree
+```
+
+### 5.Pedigree analysis
+
+pedigree inbreeding coefficient calculation, kinship
+how deep is given pedigree
+check if 260847 peeping fawn is one of most inbred individuals
+compare different packages of inbreeding calculation
+
+```{r}
+# kinship2 package
+# requires that all sires and dams have records in id column and that inidiv has either both known parents or no one is known
+
+ped_df_fixed <- with(ped_df, fixParents(
+  id = id, 
+  dadid = sire_id, 
+  momid = dam_id,
+  sex = sex))
+
+ped_obj_kin <- pedigree(id=ped_df_fixed$id, 
+                        dadid=ped_df_fixed$dadid, 
+                        momid=ped_df_fixed$momid, 
+                        sex=ped_df_fixed$sex)
+
+# kin_matrix <- kinship(ped_obj_kin) does not work because it says should be a pedigree object
+# plus this package doesn't have inbreeding calculation
+
+# pedigree package
+pedigree_obj <- ped_df[c("id", "sire_id", "dam_id")]
+ord <- orderPed(pedigree_obj)
+pedigree_obj <- pedigree_obj[order(ord),]
+
+F_ped <- calcInbreeding(pedigree_obj[c("id", "sire_id", "dam_id")]) # inbreeding coefficient
+ngen <- countGen(pedigree_obj) # generation number for each indiv
+noff <- countOff(pedigree_obj[,c("id", "sire_id", "dam_id")]) # calculate number of offspring for each indiv
+pedigree_obj <- cbind(pedigree_obj, F_ped, ngen, noff)
+
+paste("The mean F ped is", round(mean(pedigree_obj$F_ped), 4), sep=" ")
+
+pedigree_obj %>% arrange(desc(F_ped)) %>% slice(1:20)
+
+pedigree_obj <- pedigree_obj %>% 
+  mutate(F_ped=round(F_ped, 5), PCT = ntile(F_ped, 100))
+
+pedigree_obj[pedigree_obj$id=="260847",]
+
+
+# pedsuit
+
+
+
+
+# 260847 peeping fawn is one of most inbred individuals
+# find exact value pedigree inbreeding coeff to compare
+```
+To do list:
+1) make inbreeding be calculated from any package
+2) calculate F ROH, compare
+3) use KING to identify relationship
+
+
+```{r}
+# library(FamAgg)
+# 
+# test_obj <- ped_df %>% cbind(., ped_df$id) %>% rename(., "family"="ped_df$id", "father"="sire_id", 
+#                                                       "mother"="dam_id")
+# FAData(test_obj)
+# 
+# plotPed(, id=582497)
+```
+

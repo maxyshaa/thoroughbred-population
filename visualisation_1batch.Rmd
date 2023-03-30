@@ -1,0 +1,283 @@
+---
+title: "data_example"
+author: "Kseniia Maksimova"
+date: "2023-02-20"
+output:
+  html_document:
+    df_print: paged
+---
+
+**The notebook refers to visualization of partial samples of genotyping data of Thoroughbred project.**
+
+**Attaching libraries and setting the environment**
+```{r, warning=FALSE, message=FALSE, include=FALSE}
+
+rm(list = ls())
+# setwd("~/PhD_project")
+
+library(BGData)
+library(phateR)
+library(readxl)
+library(HardyWeinberg)
+library(gaston)
+library(reticulate)
+library(tidyverse)
+library(ggplot2)
+# library(MCMCpack)
+library(jcolors)
+library(cowplot)
+library(data.table)
+
+use_python("/usr/bin/python3")
+# use_python("/Users/ksu/miniconda3/bin/python")
+# use_python("/home/ksu/miniconda3/envs/phate_env/bin/python") # for phateR specification of python source
+```
+
+
+**Reading the binary genotypes file**
+```{r, message=FALSE}
+root <- "./data" #"./beatrice_sample_data" #"./SFI_KM"#
+
+bed_file <- BEDMatrix(paste(root, "TB_11K.bed", sep="/")) # binary file with all genotypes
+N <- nrow(bed_file); G <- ncol(bed_file) 
+cat("\nNumber of horses: ", N, "\nNumber of SNPs: ", G)
+```
+
+**Reading pedigree information and matching phenotypes with given genotypes**
+```{r, warning=FALSE}
+
+ped <- lapply(1:3, function(i) read_xlsx(paste(root, "pedIDUpdata_20230130_KM.xlsx", sep="/"), 
+                                         na=c("", "None", " ", "NULL"), sheet=i))
+
+fam <- read.delim(paste(root, "TB_11K.fam", sep = "/"), header=FALSE, sep=" ")
+
+horse.names <- unique(sapply(strsplit(fam[,1], "_"), function(x) paste(x[-1], collapse = "_"))) # split out the names which come after "SFI" for each horse
+# drop duplicated ids (they have different dates of genotyping and probably different chip so mapping has to be changed)
+
+ids <- ped[[1]]$horse_id[match(horse.names, ped[[1]]$`Equinome ID`)]
+
+cat("Horses ids that isn't matched:\n", table(is.na(ids))[2], "out of 402")
+
+# constructing the data frame containing all genotypes with corresponding phenotype info
+phenos <- data.frame(row.names=horse.names, id=ids) 
+phenos <- cbind(phenos, ped[[2]][match(ids, ped[[2]]$id), 6:9]) 
+```
+
+Still not really understand why for some horses we don't have phenotype or any info in pedigree table. Beatrice didn't answer this.
+
+
+**SNPs filtration**
+
+Missigness per SNP: 0.1 --geno
+Missigness per individual: 0.1 --mind
+Minor allele frequency: 0.05 --maf
+Hardy-Weinberg threshold: 0.0000001 --hwe
+(LD prunning might be useful for upcoming structural analysis)
+-- autosome flag --?
+-- nonfounders flag is used because maf option is applied to individuals with known parents so I also want to apply filter for founders animals
+```{r}
+# qc with plink
+
+# system("plink --bfile beatrice_sample_data/SFI_KM --horse --geno 0.1 --mind 0.1 --maf 0.05 --nonfounders --allow-no-sex --make-bed --out afterQC")
+# # 153949 snps left out of 488576 more than 50% filtered??
+# 
+# system("plink --bfile beatrice_sample_data/SFI_KM --horse --geno 0.1 --mind 0.1 --maf 0.01 --nonfounders --allow-no-sex --make-bed --out afterQC")
+# # 406204 SNPs left out of 488576, 16% filtered
+# # only after maf filtration happens
+
+# system(str_c("plink --bfile beatrice_sample_data/SFI_KM --horse --geno 0.1 ",
+#             "--mind 0.1 --maf 0.01 --hwe 0.0000001 --nonfounders ",
+#             "--allow-no-sex --make-bed --out beatrice_sample_data/afterQC"))
+
+system(str_c("plink1.9 --bfile data/TB_11K --horse --geno 0.1 ",
+            "--mind 0.1 --maf 0.01 --hwe 0.0000001 --nonfounders ",
+            "--allow-no-sex --make-bed --out data/afterQC"))
+
+# system(str_c("/Users/ksu/miniconda3/bin/plink --bfile SFI_KM/SFI_KM --horse --geno 0.1 ", "--mind 0.1 --maf 0.01 --hwe 0.0000001 --nonfounders ",
+#             "--allow-no-sex --make-bed --out SFI_KM/afterQC"))
+
+# 388222 SNPs left out of 488576, 17%
+# will go with this
+```
+
+**QC without plink (MAF + HWE) from Mike**
+```{r}
+# bed_file_m = bed_file # save to new variable bed file with this filtration settings
+# 
+# sm <- BGData::summarize(bed_file_m) # calculates the frequency of missing values, the minor allele frequency, std
+# bed_file_m <- bed_file_m[,sm$a>0.1];sm=BGData::summarize(bed_file_m);G=ncol(bed_file_m)  # remove uncommon variants and recompute summary
+# # greater than 10% usually consider as common
+# 
+# pvals <- sapply(1:G, function(g) {Y=bed_file_m[,g];N.AA=sum(Y==2);N.HET=sum(Y==1);X=c(N.AA,N.HET,N-N.HET-N.AA);names(X)=c("AA","AB","BB");HWExact(X,verbose=FALSE)$pval})
+# # how many was removed?
+# # equal to plink command of removing by HWE
+# 
+# bed_file_m <- bed_file_m[,pvals>1e-3];sm=BGData::summarize(bed_file_m);G=ncol(bed_file_m)  # remove alleles out of HW equilibrium and recompute summary
+# 
+# # based on number of columns in bed file here we filtered 45% of SNPs
+```
+
+**PHATE on filtered bed files**
+```{r}
+# PHATE with bed file filtered by plink 
+bed_file_plinkqc <- BEDMatrix(paste(root, "afterQC.bed", sep="/")) # upload output from plink qc
+fit <- phate(bed_file_plinkqc)
+pch.pheno <- as.factor(phenos$COB)
+pch.pheno <- addNA(pch.pheno)
+plot(fit, col=pch.pheno, pch=as.integer(pch.pheno))
+legend("topleft", leg=levels(pch.pheno), col=as.integer(1:nlevels(pch.pheno)), pch=as.integer(1:nlevels(pch.pheno)))
+```
+
+```{r}
+# PHATE with higher HWE treshhold using R filtration
+fit <- phate(bed_file_m)
+plot(fit, col=pch.pheno, pch=as.integer(pch.pheno))
+#pc.fit=prcomp(m)
+#plot(pc.fit$x,col=pch.pheno,pch=as.integer(pch.pheno))
+legend("topleft", leg=levels(pch.pheno), col=as.integer(1:nlevels(pch.pheno)), pch=as.integer(1:nlevels(pch.pheno)))
+```
+
+**Check two matrices with procrustes function**
+```{r}
+# for this procedure it's necessary to have the same size of Matrix
+# bed_file_size <- bed_file[, -sample(1:ncol(bed_file), 220544)]
+# bed_file_procr <- procrustes(bed_file_m, bed_file_size)
+# the output is Error: cannot allocate vector of size 535.3 Gb
+```
+
+**Trying different parameters of PHATE**
+```{r}
+# let's assume that it's not much difference between two matrices so we will proceed with one made by plink runs
+set.seed(11648)
+fit_auto <- phate(bed_file_plinkqc, t.max=200)
+# lets plot with 50t step 
+fit_50 <- phate(bed_file_plinkqc, t=50)
+fit_100 <- phate(bed_file_plinkqc, t=100)
+fit_150 <- phate(bed_file_plinkqc, t=150)
+
+
+lst_fits <- list(fit_50, fit_100, fit_150, fit_auto)
+gplots <- lapply(lst_fits, function(phate_fit) ggplot(phate_fit, 
+                                                      aes(x=PHATE1, y=PHATE2, color=pch.pheno)) +
+                                                      geom_point(size=1) +
+                                                      scale_color_jcolors(name="Country of Origin",
+                                                                          "pal5", na.value="grey") +
+                                                      theme_linedraw() +
+                                                      ggtitle(paste("t params is",
+                                                                    phate_fit$params$t, sep=" ")))
+
+# pdf("rplot.pdf", width = 11)
+cowplot::plot_grid(plotlist=gplots, labels = c("A", "B", "C", "D"), ncol=2, nrow=2)
+# dev.off()
+# maybe highlight main stallions? manually find them
+```
+
+**Trying characterized clusters of PHATE**
+```{r}
+# stallions from genomics inbreeding paper: A.P. Indy, Danehill, Galileo, Sadler's Wells
+ped[[2]] %>% 
+  filter(.$name %like% "indy|danehill|galileo|sadler's wells|sadler") %>% 
+  filter(.$sex==1) %>% 
+  arrange(YOB)
+
+# seems like they are id = 220, 492, 197, 2958
+stallions_ids = ped[[1]][ped[[1]]$horse_id %in% c(69, 220, 492, 197, 2958, 1944, 85026, 92990),]$`Equinome ID`
+# absolute galileo instead of galileo
+
+vec_names <- c("CM012_CM012", "CM004_CM004", "MDS001_061_MDS001_061")
+
+# can't be found because we don't have in these batches samples with different suffix than SFI
+```
+
+
+
+```{r, message=FALSE}
+df_inbreed <- read_csv("./pedigree_inbreed.csv")
+filt_ped <- read_csv("./filt_pedigree.csv")
+
+meta_inf <- merge(
+  df_inbreed, filt_ped, by="id")
+
+melted_phate_df <- as.data.frame(fit_auto)
+melted_phate_df$IID <- rownames(melted_phate_df) 
+melted_phate_df$IID <- sapply(strsplit(melted_phate_df[, "IID"], "_"), function(x) x[2]) 
+
+melted_phate_df <- merge(melted_phate_df, 
+                         meta_inf[,c("id", "Equinome.ID", "F_ped", "COB", "ngen")], by.x="IID",
+                         by.y="Equinome.ID")
+
+# ggplot(fit_auto, aes(x=PHATE1, y=PHATE2, color=)) +
+#   geom_point(size=1) +
+#   scale_color_jcolors(name="", "pal5", na.value="grey") +
+#   theme_linedraw() +
+#   ggtitle()
+
+ggplot(data = melted_phate_df) +
+  geom_point(mapping = aes(x=PHATE1, y=PHATE2, color = F_ped)) + 
+  scale_colour_gradient2() +
+  geom_hline(yintercept = 0, linetype="dotted") + 
+  geom_vline(xintercept = 0, linetype="dotted") +
+  labs(title = "",
+       x = paste0("Principal component 1 (",eigen_percent[1]," %)"),
+       y = paste0("Principal component 2 (",eigen_percent[2]," %)")) + 
+  theme_minimal()
+
+melted_phate_df$distance = sqrt((melted_phate_df$PHATE1 - 0)**2 + (melted_phate_df$PHATE2 - 0)**2)
+plot(melted_phate_df$distance, melted_phate_df$F_ped)
+```
+
+
+**PCA for plink qc**
+```{r}
+## Genetic distances between individuals
+
+system("plink --bfile beatrice_sample_data/afterQC --horse --nonfounders --allow-no-sex --recode --out beatrice_sample_data/afterQC_recode")
+
+system("plink --horse --allow-no-sex --nonfounders --file beatrice_sample_data/afterQC_recode --distance-matrix --out beatrice_sample_data/dataForPCA")
+
+```
+
+
+```{r}
+# Load the data
+dist_populations <- read.table(paste(root, "dataForPCA.mdist", sep="/"), header=F)
+### Extract breed names
+fam <- data.frame(famids=read.table(paste(root, "dataForPCA.mdist.id", sep="/"))[,1])
+### Extract individual names 
+famInd <- data.frame(IID=read.table(paste(root, "dataForPCA.mdist.id", sep="/"))[,2])
+  
+## Perform PCA using the cmdscale function 
+# Time intensive step - takes a few minutes with the 4.5K animals
+mds_populations <- cmdscale(dist_populations, eig=T,5)
+
+## Extract the eigen vectors
+eigenvec_populations <- cbind(fam,famInd,mds_populations$points)
+
+eigenvec_populations[, "IID_trim"] <- sapply(strsplit(eigenvec_populations[, "IID"], "_"), function(x) x[2]) 
+
+eigenvec_populations_merged <- merge(eigenvec_populations, meta_inf[,c("id", "Equinome.ID", "F_ped", "COB")], by.x="IID_trim", by.y="Equinome.ID", all.x=TRUE)
+
+# eigenvec_populations_merged["F_ped"] <- eigenvec_populations_merged["F_ped"]*100
+
+## Proportion of variation captured by each eigen vector
+eigen_percent <- round(((mds_populations$eig)/sum(mds_populations$eig))*100, 2)
+
+# Visualize PCA in tidyverse
+# PCA plot
+ggplot(data = eigenvec_populations_merged) +
+  geom_point(mapping = aes(x = `1`, y = `2`, color = F_ped)) + 
+  scale_colour_gradient2() +
+  geom_hline(yintercept = 0, linetype="dotted") + 
+  geom_vline(xintercept = 0, linetype="dotted") +
+  labs(title = "PCA of ",
+       x = paste0("Principal component 1 (",eigen_percent[1]," %)"),
+       y = paste0("Principal component 2 (",eigen_percent[2]," %)")) + 
+  theme_minimal()
+```
+
+```{r}
+
+cat(aus_ids, file="aus_ids.txt",sep="\n")
+
+```
+

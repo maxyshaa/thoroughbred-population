@@ -1,0 +1,123 @@
+---
+title: "pedigree_analysis_v1"
+author: "Kseniia Maksimova"
+date: "2023-03-07"
+output: pdf_document
+---
+
+# This markdown presents a pedigree analysis of horse data provided by Beatrice Plusvital. 
+
+```{r, warning=FALSE,message=FALSE}
+rm(list = ls())
+
+library(openxlsx)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(tidyverse)
+library(kinship2)
+library(pedsuite)
+library(pedigree)
+# library(hrbrthemes)
+
+# setwd("")
+```
+
+## 1. Uploading the data
+```{r}
+pedigree_path <- "data/pedIDUpdata_20230130_KM.xlsx"
+
+sheets <- openxlsx::getSheetNames(pedigree_path)
+sample_df <- lapply(sheets, openxlsx::read.xlsx, xlsxFile=pedigree_path, na.string=c("", "None", " ", "NULL")) # to unify all unidentified values
+
+names(sample_df) <- sheets
+# family structure is in PedNew sheet
+ped_df <- sample_df[["PedNew"]]
+head(ped_df)
+```
+
+## 2. Data exploration
+```{r}
+
+print(paste("The number of individuals is", dim(ped_df)[1],
+"and number of columns is", dim(ped_df)[2], sep=" "))
+
+# let's check not ids columns
+cols_f <- c("status", "sex", "colour", "COB")
+stat_factors <- lapply( sapply(cols_f, function(x){ tbl <- table( unlist( ped_df[,grep( x, colnames(ped_df) )] ) ,useNA="ifany" ); rbind( cbind( Percent=round( tbl/sum(tbl)*100, digits=2 ), Freq=tbl ), cbind( sum(tbl/sum(tbl)*100), sum(tbl) ) ); } ), function(x) x[order(x[,1]),] ) # making a list of matrices with frequency per each category column of our df
+
+print(stat_factors)
+
+# let's convert all columns except YOB to character
+# ped_df$YOB %<>% as.Date(ped_df$YOB, format="%Y")
+# ped_df %<>% mutate_at(cols_f, as.factor)
+
+# check year of birth column
+p <- ped_df %>% ggplot(aes(x=YOB)) + 
+  geom_histogram( binwidth=5, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+  ggtitle("Distribution of years of birth") +
+  theme(
+    plot.title = element_text(size=10)
+    ) 
+  # theme_ipsum()
+
+print(p)
+
+print(paste("where the minimum year of birth is", min(ped_df$YOB, na.rm=T), "and the maximum is",
+              max(ped_df$YOB, na.rm = T), sep=" "))
+
+```
+
+```{r}
+print("The amount of NaN values is:");sapply(ped_df, function(x) sum(is.na(x)), USE.NAMES = T) # probably in sex columns NaN values replace to 0
+```
+
+## 3. Checking for logical errors
+```{r}
+# if some individuals has several sires or dams
+ped_df %>%
+  group_by(id) %>%
+  summarize(n_sires=n_distinct(sire_id), n_dams=n_distinct(dam_id)) %>%
+  filter(n_sires>1 | n_dams>1) %>%
+  print(paste("individuals that have several sires/dams", nrows()))
+
+# if the year of individual less than the year of its sire or dam
+ids_col <- c("id", "sire_id", "dam_id", "YOB") 
+joined_df <- ped_df[ids_col] %>%
+  merge(ped_df[ids_col], by.x="sire_id", by.y="id", suffixes=(c("_child", "_sire"))) %>%
+  select(id, sire_id, dam_id_child, YOB_child, YOB_sire) %>%
+  merge(ped_df[ids_col], by.x="dam_id_child", by.y="id", suffixes=(c("_child", "_dam"))) %>%
+  rename(., "YOB_dam"="YOB", "child"="id") %>%
+  select(child, dam_id_child, sire_id_child, YOB_child, YOB_sire, YOB_dam)
+
+joined_df %>%
+  filter(YOB_child<YOB_sire & YOB_sire!="None" | YOB_child<YOB_dam & YOB_dam!="None")
+
+# if sex doesn't match with parentship info
+# i.e. some sires are mothers of someone
+length(ped_df$dam_id[complete.cases(ped_df$dam_id) %in% ped_df[ped_df$sex==1,]$id])
+# some dams are fathers of someone
+length(ped_df$sire_id[complete.cases(ped_df$sire_id) %in% ped_df[ped_df$sex==2,]$id])
+
+```
+## 4.Pedigree analysis
+```{r}
+# kinship2
+# pedsuite
+# pedigree
+
+# at first we need to create a pedigree obj
+ped_df$sex[is.na(ped_df$sex)] <- 3
+# Pedobj <- pedigree(id=ped_df$id, dadid=ped_df$sire_id, momid=ped_df$dam_id, sex=ped_df$sex)
+# summary(Pedobj)
+
+pedigree <- ped_df[c("id", "sire_id", "dam_id")]
+ord <- orderPed(pedigree)
+pedigree <- pedigree[order(ord),]
+F_ped <- calcInbreeding(pedigree[c("id", "sire_id", "dam_id")])
+mean(F_ped)
+```
+To do list:
+1) make inbreeding be calculated from any package
+2) calculate F ROH, compare
+3) use KING to identify relationship
