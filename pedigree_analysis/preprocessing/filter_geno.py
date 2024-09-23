@@ -1,30 +1,67 @@
+"""This module contains functions for clearing genotype ids"""
 
-def extract_ped_additional(init_file: pd.DataFrame) -> pd.DataFrame:
-    """This function changes the format of the additional dataset of pedigree mixed with genotypes \
-        to be able to concatenate with the base one for downstream analysis.
-    Args:
-        init_file: dataframe to be cleared
-    Returns:
-        df: returns dataframe
+import pandas as pd
+
+
+def filter_by_fam(geno_ids: pd.DataFrame, id_name: str, fam_ids: set) -> pd.DataFrame:
     """
-    init_file["Horse Name"] = init_file["Horse Name"].str.lower()
-    init_file["Sire"] = init_file["Sire"].str.lower()
-    init_file["Dam"] = init_file["Dam"].str.lower()
-    init_file["sex"] = init_file["sex"].replace(["Male", "Female"],["1", "2"])
-    init_file["status"] = "9999"
-    init_file["sire_id"] = None 
-    init_file["dam_id"] = None
-    init_file["id_bed"] = init_file["id"]
-    init_file["ped_full"] = False
-    init_file.rename(columns={"Horse Name":"name", "Year of Birth":"YOB",
-                              "Country of Birth":"COB", "Sire":"sire_name", "Dam":"dam_name"}, inplace=True)
-    init_file["YOB"] = init_file["YOB"].astype("float").astype("Int64")
-    return init_file
+    Filter pedid_match to keep only equinomeIDs that are present in the bed file
+    """
+    filtered = geno_ids[geno_ids[id_name].isin(fam_ids)]
+    abcent = geno_ids[~geno_ids[id_name].isin(fam_ids)]["id"]
+    print(f"The number of ID that are not presented {len(abcent)}")
+    return filtered
 
+def filter_by_chip(init_file: pd.DataFrame, snp_col:str, batch_col:str, equinomeid:str, bedid:str, 
+                   removed_bedids: list) -> pd.DataFrame:
+    """
+    Filters genotype records based on SNPChip priority and batchID, and stores removed bedids.
 
-def concat_peds(fileone: pd.DataFrame, filetwo: pd.DataFrame) -> pd.DataFrame:
-    """"""
-    return
+    Parameters:
+    -----------
+    init_file : pd.DataFrame
+        The input DataFrame containing genotype records.
+    snp_col : str
+        Column name indicating the SNPChip information.
+    batch_col : str
+        Column name for the batch information.
+    equinomeid : str
+        Column name for equinome ID to drop duplicates based on.
+    bedid : str
+        Column name for the bed ID.
+    removed_bedids : list
+        A list to store removed bed IDs from the input DataFrame.
+
+    Returns:
+    --------
+    pd.DataFrame
+        The filtered DataFrame after removing duplicates based on SNPChip priority and batchID.
+    """
+    init_file = init_file.copy()
+    snp_priority = {"SNP670":3, "SNP70_V2":2, "SNP70_PVL":2, "SNP70":2, "SNP50":1}
+    init_file.loc[:, "SNPChip_prority"] = init_file[snp_col].map(snp_priority)
+    df_sorted = init_file.sort_values(["SNPChip_prority", batch_col], ascending=[False, False])
+    # drop duplicates in 'equinomeID' column and keep the first occurrence (highest priority SNPChip and maximum batchID)
+    df_filtered = df_sorted.drop_duplicates(subset=equinomeid, keep="first").drop(columns="SNPChip_prority")
+    print(f"Duplicates were filtered, the shape of filtered dataframe is {df_filtered.shape[0]}")
+
+    duplicates_removed = init_file[~init_file.index.isin(df_filtered.index)]
+    exclusive_rows = duplicates_removed[duplicates_removed[bedid].notna()]
+    removed_bedids.extend(exclusive_rows[bedid].tolist())
+    print(f"Removed {exclusive_rows.shape[0]} rows")
+    
+    return df_filtered
+
+def update_idmatch(pedid_match: pd.DataFrame, new_geno: pd.DataFrame) -> pd.DataFrame:
+    """
+    Takes updated lists of EquinomeID of given data and update pedidmatch info for first df.
+    """
+    if "Equinome ID" not in pedid_match.columns or "equinomeID" not in new_geno.columns:
+        raise ValueError("Expected columns 'Equinome ID' in pedid_match and 'equinomeID' in new_geno")
+        
+    new_pedid_match = pedid_match[pedid_match["Equinome ID"].isin(new_geno["equinomeID"])]
+
+    return new_pedid_match
 
 # I need to extract columns related only to pedigree thing, \
 # make columns the same, add info if it's full pedigree or not, if it has genotype or not,\

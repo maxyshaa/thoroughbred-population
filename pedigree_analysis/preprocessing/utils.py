@@ -3,6 +3,7 @@
 import pandas as pd
 import os
 from typing import Union
+import re
 
 def save_file(data: Union[pd.DataFrame, set], path: str, filename: str) -> None:
     """
@@ -31,3 +32,18 @@ def save_file(data: Union[pd.DataFrame, set], path: str, filename: str) -> None:
         df = pd.DataFrame(data)
         df.to_csv(path_or_buf=file_path, sep=",", index=False, header=False)
     print(f"File saved to {file_path}")
+
+def clear_string_val(text: pd.Series) -> pd.Series:
+    """Cleans the input text by stripping, lowering, and removing special characters"""
+    text = text.apply(lambda x: str(x).strip().lower() if isinstance(x, str) else x)
+    text = text.apply(lambda x: re.sub(r'[^\w\s]', '', x) if isinstance(x, str) else x)
+    text = text.apply(lambda x: re.sub(r'\s+', ' ', x) if isinstance(x, str) else x)
+    return text
+
+def change_sex(text: pd.Series) -> pd.Series:
+    """"""
+    if text.str.contains("Female").any():
+        text = text.map({"Female": 2, "Male": 1}).fillna(0).astype(int).astype(str)
+    else:
+        text = text.fillna(0).astype(str)
+    return text

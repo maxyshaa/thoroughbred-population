@@ -71,4 +71,3 @@ def fix_logic(init_file: pd.DataFrame) -> pd.DataFrame:
         pass
     
     return init_file
-
