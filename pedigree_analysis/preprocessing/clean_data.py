@@ -5,17 +5,23 @@ import numpy as np
 
 
 def clear_colour(init_file: pd.DataFrame, col_name: str) -> pd.DataFrame:
-    """Correct the colour variable in the ped_df that automatically inherited values from the websites.
+    """Correct the colour variable in the ped_df.
     Args:
         init_file: dataframe to be cleared
         col_name: name of the colour column in the file
     Returns:
         df: returns dataframe with removed unclear records
     """
-    incor_color = ~init_file[col_name].isna() & init_file[col_name].str.contains('\d', regex=True)
+    incor_color = ~init_file[col_name].isna() & init_file[col_name].str.contains(r'\d', regex=True)
+    # modified_rows = init_file.loc[incor_color]
+    modified_ids = init_file.loc[incor_color, "id"]
     init_file.loc[incor_color, col_name] = np.nan
-
-    print(f"The missing values in the {col_name} is {init_file[col_name].isna().sum()} out of {init_file.shape[0]} and variables in the given columns are following:{init_file[col_name].unique()}")
+    
+    if not modified_ids.empty:
+        print(f"The following IDs were modified in the column '{col_name}':\n{modified_ids.tolist()}")
+    else:
+        print(f"No rows were modified in the column '{col_name}'.")
+    
     return init_file 
 
 
@@ -36,7 +42,7 @@ def fix_logic(init_file: pd.DataFrame) -> pd.DataFrame:
         error_message = "DataFrame contains rows with multiple sire/dam of an inidividual"
         raise ValueError(error_message) # since we don't have this issue so I just raise the error here
     else:
-        print("Multiple parents not detected")
+        print("Multiple parents are not detected")
     
     # if sex code matches with partnership; 1 codes a male
     sex_1dam = init_file.query("(sex=='1') and (id in dam_id)")
@@ -61,7 +67,8 @@ def fix_logic(init_file: pd.DataFrame) -> pd.DataFrame:
     if len(wrongage_d) > 0:
         wrong_ids = wrongage_d["id_child"].tolist()
         init_file.loc[init_file["id"].isin(wrong_ids), "dam_id"] = np.nan
-        print(f"dam_id for individual {init_file.loc[init_file['id'].isin(wrong_ids), 'id'].to_string(index=False)} is removed")
+        print(f"")
+        print(f"dam_id for individual {init_file.loc[init_file['id'].isin(wrong_ids), 'id'].to_string(index=False)} is yonger than the daughter hence dam_id record for the individuals is removed")
     elif len(wrongage_s) > 0:
         wrong_ids = wrongage_s["id_child"].tolist()
         init_file.loc[init_file["id"].isin(wrong_ids), "sire_id"] = np.nan

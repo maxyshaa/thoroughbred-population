@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import re
 from preprocessing.load_data import read_pedigree_sheets, get_pedigree_csv, read_fam
 from preprocessing.filter_geno import filter_by_fam, filter_by_chip, update_idmatch
 from preprocessing.clean_data import clear_colour, fix_logic
@@ -77,8 +76,10 @@ def main() -> None:
     fam_11k_ids = read_fam(os.path.join(geno_path, "TB_11K.fam"))
     fam_6k_ids = read_fam(os.path.join(geno_path, "TB_6K.fam"))
     bed_ids = fam_11k_ids.union(fam_6k_ids)
+
     # umbigous individuals
-    sameid_diff_names = pd.read_csv("problems/pedid_dup_diff_names.csv")["Equinome ID"]
+    # sameid_diff_names = pd.read_csv("problems/pedid_dup_diff_names.csv")["Equinome ID"]
+    # Already removed from raw_dataset after review
 
     ### Step 2: Clean 1st pedigree DataFrame
     ped_cleaned = fix_logic(clear_colour(init_file=ped_df, col_name="colour"))
@@ -111,9 +112,9 @@ def main() -> None:
     # So I don't want to include those genotypes if I don't know what horse is that, I have file saved in problems, it needs to be resolved
     # for now I am removing them before we prioritized by chip diff equinome IDs
 
-    pedid_match_chip_filtered = pedid_match_chip_filtered[~pedid_match_chip_filtered["Equinome ID"].isin(sameid_diff_names)]
-    geno_id_chip_filtered = geno_id_chip_filtered[~geno_id_chip_filtered["equinomeID"].isin(sameid_diff_names)]
-    print("----------Wrong assigned equinomeIDs were removed from pedid_match and geno_id_nodup----------")
+    # pedid_match_chip_filtered = pedid_match_chip_filtered[~pedid_match_chip_filtered["Equinome ID"].isin(sameid_diff_names)]
+    # geno_id_chip_filtered = geno_id_chip_filtered[~geno_id_chip_filtered["equinomeID"].isin(sameid_diff_names)]
+    # print("----------Wrong assigned equinomeIDs were removed from pedid_match and geno_id_nodup----------")
 
     # finding duplicates by horse_id and getting their equinome id
     duplicated_horse_ids = pedid_match_chip_filtered[pedid_match_chip_filtered["horse_id"].duplicated(keep=False)]

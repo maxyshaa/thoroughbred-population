@@ -9,7 +9,7 @@ def filter_by_fam(geno_ids: pd.DataFrame, id_name: str, fam_ids: set) -> pd.Data
     """
     filtered = geno_ids[geno_ids[id_name].isin(fam_ids)]
     abcent = geno_ids[~geno_ids[id_name].isin(fam_ids)]["id"]
-    print(f"The number of ID that are not presented {len(abcent)}")
+    print(f"The number of ID of pedidIDmach that are not presented in fam files {len(abcent)}")
     return filtered
 
 def filter_by_chip(init_file: pd.DataFrame, snp_col:str, batch_col:str, equinomeid:str, bedid:str, 
@@ -43,7 +43,7 @@ def filter_by_chip(init_file: pd.DataFrame, snp_col:str, batch_col:str, equinome
     df_sorted = init_file.sort_values(["SNPChip_prority", batch_col], ascending=[False, False])
     # drop duplicates in 'equinomeID' column and keep the first occurrence (highest priority SNPChip and maximum batchID)
     df_filtered = df_sorted.drop_duplicates(subset=equinomeid, keep="first").drop(columns="SNPChip_prority")
-    print(f"Duplicates were filtered, the shape of filtered dataframe is {df_filtered.shape[0]}")
+    print(f"Duplicated genotypes by chip array were filtered, the shape of filtered dataframe is {df_filtered.shape[0]}")
 
     duplicates_removed = init_file[~init_file.index.isin(df_filtered.index)]
     exclusive_rows = duplicates_removed[duplicates_removed[bedid].notna()]
