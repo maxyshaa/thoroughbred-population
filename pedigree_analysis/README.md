@@ -1,6 +1,17 @@
-## **Pedigree data preprocessing and family content exploration**
+## **Pedigree Data Preprocessing and Analysis**
 
-This Python module is designed for cleaning and preparing two pedigree datasets for downstream analysis. The pedigree data comes from the open resource PedigreeQuery, while the genotypes were provided by Plusvital.
+This Python module cleans and prepares pedigree datasets for downstream analysis, ensuring a single file is ready for use with R pedigree packages and BLUP models.
+
+### Data overview
+
+When customers request animal genotypes, they must provide the sex, birth month, and country. They may also provide the horse's name, sire, and dam, which form the pedigree.
+
+Potential issues:
+
+1) Due to differences between the northern and southern hemispheres, the birth month might be reversed (e.g., July instead of January), potentially causing year-of-birth discrepancies. Use Equiline.com to verify birth years.
+2) Animals in the back pedigree born before 1960, marked as founders, may have multiple records with different IDs. Consider merging these entries.
+3) Some genotypes don't have sex information - it's something we could infer using plink.
+4) Consider using IBD or KING to perform a quality check to ensure, for instance, that all individuals with the same sire are genetically related.
 
 ### Input data
 
@@ -8,7 +19,7 @@ The raw data are located in the `data/ `folder and consist of two files: `raw_pe
 
 **Pedigree #1**
 
-This is an `.xlsx` file containing individuals found in an open resource pedigree. It includes three sheets:
+This is an `.xlsx` file containing individuals with back pedigree data, spread across three sheets:
 
 * **pedIDmatch**
 
@@ -42,7 +53,7 @@ This is an `.xlsx` file containing individuals found in an open resource pedigre
 
 **Pedigree #2**
 
-This is a `.csv` file containing genotyped animals that were not found in PedigreeQuery.
+This is a `.csv` file containing genotyped animals not found in PedigreeQuery.
 
 | id              |  batchID | equinomeID | SNPChip | Year of Birth | sex    | Country Reported | Horse Name      | Sire          | Dam           | Month of Birth | Country of Birth |
 | :-------------- | -------: | :--------- | :------ | ------------: | :----- | :--------------- | :-------------- | :------------ | :------------ | :------------- | :--------------- |
@@ -59,7 +70,7 @@ The preprocessing produces two output files in the `results/` folder:
 `bedids2exclude.txt` **—** a file containing bed_ids of genotypes that were excluded from the analysis, formatted for PLINK QC.
 
 | 20141029_WKS001_177 20141029_WKS001_177 |
-| -------------------------------------- |
+| --------------------------------------- |
 | 20180601_BTY001_002 20180601_BTY001_002 |
 | 20180601_BTY001_003 20180601_BTY001_003 |
 | 20150528_SHS001_262 20150528_SHS001_262 |
@@ -78,22 +89,36 @@ The preprocessing produces two output files in the `results/` folder:
 
 ### **Requirements**
 
-* python => 3.10.10
+* Python => 3.10.10
 * R => 4.3.2
 
 ## Synopsis
 
 **Preprocessing steps:**
 
-1) Pedigree #1 undergoes some QC. This includes clearing the colour column (where some values are digits) and checking for multiple sires or dams per individual. Sex checks are performed to ensure no inconsistencies (e.g., dams listed as sires). Records that violate the rule "parent must be older than the child" are removed.
-2) Genotype records from both files are checked against the provided `.fam` files. Individuals are then filtered based on SNPChip density, selecting the most recent data when duplicates by EquinomeID exist.
-3) Duplications in pedIDmatch are resolved by removing entries listed in `problems/pedid_dup_diff_names.csv `from both pedIDmatch and the GenotypeIDs dataframes. Duplicates based on horse_id are prioritized by chip information, as was done previously for EquinomeID duplicates.
-4) All three dataframes from Pedigree #1 are merged, and the columns are tidied to allow concatenation with Pedigree #2.
-5) Pedigree #2 is modified to allow concatenation with Pedigree #1 (since it contains extra columns).
-6) Pedigree #1 and Pedigree #2 are concatenated into a single file,` cleaned_pedigree.csv`.
-7) The file `bedids2exclude.txt` file, containing all bed_ids excluded from the analysis. This file is used in PLINK QC analysis.
+1) **Pedigree #1 undergoes QC** , which includes:
+
+   * Removing invalid digit entries from the colour column.
+   * Checking for individuals with multiple sires or dams.
+   * Ensuring parents are always older than their offspring.
+   * Verifying that the sex code (1 for sires, 2 for dams) matches the individual's role (sire or dam).
+2) **Genotype records from both files** are filtered:
+
+   * EquinomeIDs are checked against the provided .fam file.
+   * Duplicates based on EquinomeID are sorted by SNPChip density and date of genotyping.
+   * Higher-density genotypes and the most recent data are selected.
+3) **Duplicates in pedIDmatch** are resolved by:
+
+   * Identifying all EquinomeIDs associated with the same horse_id.
+   * Prioritizing duplicates based on SNPChip density and genotyping date, as done previously.
+4) **All three dataframes from Pedigree #1** are merged, and columns are standardized to allow concatenation with Pedigree #2.
+5) **Pedigree #2** is adjusted by aligning its columns with Pedigree #1 for concatenation.
+6) **Pedigree #1 and Pedigree #2** are concatenated into a single file, `cleaned_pedigree.csv`.
+7) **The `bedids2exclude.txt` file** is generated, containing all bed_ids excluded from the analysis, formatted for PLINK QC.
 
 ## Running preprocessing
+
+To run the preprocessing pipeline, follow the steps below:
 
 ```bash
 pip install -r requirements.txt
